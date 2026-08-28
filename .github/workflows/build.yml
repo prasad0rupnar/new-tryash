@@ -31,9 +31,17 @@ jobs:
 
       - name: Build APK with Buildozer
         run: |
-          yes | buildozer android debug
+          set -o pipefail
+          yes | buildozer android debug 2>&1 | tee buildozer_log.txt
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-log
+          path: buildozer_log.txt
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
