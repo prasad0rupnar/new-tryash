@@ -13,10 +13,11 @@ from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.button import Button
 from kivy.uix.popup import Popup
-from kivy.uix.image import Image
 from kivy.metrics import dp
 from kivy.core.window import Window
 from kivy.utils import platform
+from kivy.graphics import Color, Ellipse
+from kivy.uix.widget import Widget
 
 from logic import ExpenseStore, ExpenseManager, Chatbot
 
@@ -33,6 +34,77 @@ def get_data_dir():
     except Exception:
         pass
     return os.path.join(os.path.expanduser("~"), ".expense_ai")
+
+
+class PieChart(Widget):
+    """Draws a simple pie chart using Kivy's canvas graphics only (no matplotlib)."""
+
+    PALETTE = [
+        (0.30, 0.69, 0.31, 1), (0.20, 0.60, 0.86, 1), (0.90, 0.49, 0.13, 1),
+        (0.61, 0.35, 0.71, 1), (0.90, 0.22, 0.21, 1), (0.95, 0.77, 0.06, 1),
+        (0.10, 0.74, 0.61, 1), (0.55, 0.34, 0.29, 1), (0.40, 0.40, 0.40, 1),
+    ]
+
+    def __init__(self, data, **kwargs):
+        super().__init__(**kwargs)
+        self.data = data  # dict: category -> amount
+        self.bind(pos=self._redraw, size=self._redraw)
+        self._redraw()
+
+    def _redraw(self, *args):
+        self.canvas.clear()
+        if not self.data:
+            return
+        total = sum(self.data.values())
+        if total <= 0:
+            return
+
+        size = min(self.width, self.height) * 0.8
+        cx = self.x + self.width / 2
+        cy = self.y + self.height / 2
+
+        with self.canvas:
+            start_angle = 0
+            for i, (cat, amount) in enumerate(self.data.items()):
+                fraction = amount / total
+                sweep = fraction * 360
+                Color(*self.PALETTE[i % len(self.PALETTE)])
+                Ellipse(pos=(cx - size / 2, cy - size / 2), size=(size, size),
+                         angle_start=start_angle, angle_end=start_angle + sweep)
+                start_angle += sweep
+
+
+class PieLegend(BoxLayout):
+    """Simple color-swatch + label legend under the pie chart."""
+
+    def __init__(self, data, **kwargs):
+        super().__init__(orientation="vertical", size_hint_y=None, spacing=dp(4), **kwargs)
+        self.bind(minimum_height=self.setter("height"))
+        total = sum(data.values()) or 1
+        for i, (cat, amount) in enumerate(data.items()):
+            row = BoxLayout(size_hint_y=None, height=dp(24), spacing=dp(8))
+            color = PieChart.PALETTE[i % len(PieChart.PALETTE)]
+            swatch = Widget(size_hint_x=None, width=dp(18))
+
+            def make_updater(widget, col):
+                def _update(*_):
+                    widget.canvas.clear()
+                    with widget.canvas:
+                        Color(*col)
+                        Ellipse(pos=widget.pos, size=(dp(18), dp(18)))
+                return _update
+
+            updater = make_updater(swatch, color)
+            swatch.bind(pos=updater, size=updater)
+            updater()
+
+            pct = amount / total * 100
+            label = Label(text=f"{cat} — {pct:.1f}%", color=(1, 1, 1, 1),
+                           halign="left", valign="middle", size_hint_x=1)
+            label.bind(size=lambda inst, val: setattr(inst, "text_size", val))
+            row.add_widget(swatch)
+            row.add_widget(label)
+            self.add_widget(row)
 
 
 class ChatBubble(Label):
@@ -200,22 +272,17 @@ class ExpenseApp(App):
             self.bot_say("📊 No data for graph yet.")
             return
 
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
-        fig, ax = plt.subplots(figsize=(5, 5))
-        ax.pie(data.values(), labels=data.keys(), autopct="%1.1f%%")
-        ax.set_title("Expense Distribution")
-        img_path = os.path.join(get_data_dir(), "graph.png")
-        fig.savefig(img_path, facecolor="white")
-        plt.close(fig)
-
-        content = BoxLayout(orientation="vertical")
-        content.add_widget(Image(source=img_path))
+        content = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(10))
+        chart = PieChart(data, size_hint=(1, 0.65))
+        legend_scroll = ScrollView(size_hint=(1, 0.35))
+        legend_scroll.add_widget(PieLegend(data))
         close_btn = Button(text="Close", size_hint_y=None, height=dp(44))
+
+        content.add_widget(chart)
+        content.add_widget(legend_scroll)
         content.add_widget(close_btn)
-        popup = Popup(title="📈 Expense Graph", content=content, size_hint=(0.9, 0.9))
+
+        popup = Popup(title="📈 Expense Distribution", content=content, size_hint=(0.9, 0.9))
         close_btn.bind(on_release=popup.dismiss)
         popup.open()
 
